@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
@@ -7,25 +8,25 @@ import numpy as np
 
 checkerboard_dimensions = (9, 7)
 
-def generate_world_points(checkerboard_dim=checkerboard_dimensions, square_size=0.0175):
+def generate_world_points(checkerboard_dim=checkerboard_dimensions, square_size=0.0186):
     objp = np.zeros((checkerboard_dim[0]*checkerboard_dim[1],3), np.float32)
     objp[:,:2] = np.mgrid[0:checkerboard_dim[0],0:checkerboard_dim[1]].T.reshape(-1,2)
     objp *= square_size
     return objp
 
-def generate_world_points_R(checkerboard_dim=checkerboard_dimensions, square_size=0.0175):
+def generate_world_points_R(checkerboard_dim=checkerboard_dimensions, square_size=0.0186):
     objp = np.zeros((checkerboard_dim[0]*checkerboard_dim[1],3), np.float32)
     objp[:,:2] = np.mgrid[0:checkerboard_dim[0],0:checkerboard_dim[1]].T.reshape(-1,2)
     objp *= square_size
 
     ## transform points to {R} frame
     T_R_checkerboard = np.eye(4)
-    #Rot_M = np.asarray([[-1, 0, 0], [0, 1, 0], [0, 0, -1]])
-    Rot_M = np.asarray([[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]])
-    T_R_checkerboard[:3, :3] = Rot_M
-    T_R_checkerboard[0,3] = 0.1185
-    T_R_checkerboard[1,3] = 0.0645
-    T_R_checkerboard[2,3] = 0.0
+    T_R_checkerboard[0,0] = 1
+    T_R_checkerboard[1,1] = -1
+    T_R_checkerboard[2,2] = -1
+    T_R_checkerboard[0,3] = 0.0423
+    T_R_checkerboard[1,3] = 0.1016
+    T_R_checkerboard[2,3] = 0
 
     objp_h = np.hstack((objp, np.ones((objp.shape[0], 1))))
     objp_t = T_R_checkerboard.dot(objp_h.T)
@@ -87,10 +88,11 @@ class CamToWorld(Node):
         
     
     def image_callback(self, data):
-        if self.got_camera_info:
-            self.get_logger().info('Receiving video frame')
-        else:
+        if not self.got_camera_info:
             self.get_logger().info('Waiting for camera info')
+            return
+            
+        self.get_logger().info('Receiving video frame')
         current_frame = self.br.imgmsg_to_cv2(data)
         rgb_image = cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR) ## ROS is RGB, OpenCV is BGR
 
@@ -106,8 +108,8 @@ class CamToWorld(Node):
             cv2.drawChessboardCorners(rgb_image, checkerboard_dimensions, corners2, ret)
 
             ## solve PnP
-            world_points = generate_world_points_R()
-            #world_points = generate_world_points()
+            # world_points = generate_world_points_R()
+            world_points = generate_world_points()
             ret_pnp, rvecs, tvecs = cv2.solvePnP(world_points, corners2, self.k_matrix, self.distortion_params, flags=cv2.SOLVEPNP_ITERATIVE)
 
             if ret_pnp:

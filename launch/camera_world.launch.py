@@ -25,7 +25,7 @@ def generate_launch_description():
     ]
 
     cam_to_world = Node(
-        package='prarob_calib', executable='cam_to_world', name='cam2world', output='screen'
+        package='sketch-terminator2', executable='camera_to_world.py', name='cam2world', output='screen'
     )
 
     camera_group = GroupAction(camera_nodes)
