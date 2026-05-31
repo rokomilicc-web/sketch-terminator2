@@ -15,3 +15,6 @@ __pycache__/
 
 # Ignoriraj .env datoteke
 config/.env
+
+# Ignore yolo models
+yolo12m.pt
