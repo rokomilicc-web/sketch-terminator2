@@ -27,9 +27,11 @@ install(PROGRAMS
   sketch-terminator2/move_robot.py
   sketch-terminator2/kinematika.py
   sketch-terminator2/generate_smooth_path.py
+  sketch-terminator2/yolo_node.py
   prarob_calib/camera_to_world.py
   DESTINATION lib/${PROJECT_NAME}
 )
+
 
 # 2. INSTALACIJA SVIH RESURSA (Launch datoteke, URDF model, YAML konfiguracije, Meshes)
 install(

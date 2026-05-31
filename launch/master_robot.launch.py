@@ -15,6 +15,13 @@ def generate_launch_description():
     
     controller_config = os.path.join(get_package_share_directory(package_name), "controllers", "controllers.yaml")
     vision_config_file = os.path.join(get_package_share_directory(package_name), "config", "vision_config.yaml")
+    camera_params_file = os.path.join(get_package_share_directory(package_name), "config", "camera_params.yaml")
+
+    prefix_cmd = None
+    if os.system("which gnome-terminal > /dev/null 2>&1") == 0:
+        prefix_cmd = "gnome-terminal --"
+    elif os.system("which xterm > /dev/null 2>&1") == 0:
+        prefix_cmd = "xterm -e"
 
     return LaunchDescription([
         # 1. ROS2 HARDVERSKO SUČELJE I KONTROLER MANAGERI
@@ -63,6 +70,15 @@ def generate_launch_description():
             output="screen",
         ),
 
+        # 2.5 CAMERA NODE
+        Node(
+            package='usb_cam', 
+            executable='usb_cam_node_exe', 
+            name="camera",
+            output='screen',
+            parameters=[camera_params_file]
+        ),
+
         # 3. VIZIJSKI ČVOR (YOLO) S UČITANIM PARAMETRIMA KALIBRACIJE
         Node(
             package=package_name,
@@ -70,6 +86,24 @@ def generate_launch_description():
             name='yolo_workspace_processing_node',
             output='screen',
             parameters=[vision_config_file]
+        ),
+
+        # 3.1. YOLO DETECTION ČVOR (Pokreće YOLOv12 inferenciju na slici s kamere)
+        Node(
+            package=package_name,
+            executable='yolo_node.py',
+            name='yolo_node',
+            output='screen',
+            parameters=[{
+                'model': 'yolo12m.pt',
+                'device': 'cuda:0',
+                'threshold': 0.5,
+                'iou': 0.5,
+                'input_image_topic': '/image_raw',
+                'detections_topic': '/yolo/detections',
+                'debug_image_topic': 'dbg_image',
+                'use_debug': True
+            }]
         ),
 
         # 4. ČVOR ZA PLANIRANJE PUTANJE
@@ -94,7 +128,7 @@ def generate_launch_description():
             executable="generate_smooth_path.py",
             name="smooth_path_generator",
             output="screen",
-            prefix="xterm -hold -geometry 90x20+0+0 -bg black -fg edge -title 'SMOOTH PATH GENERATOR' -e"
+            prefix=prefix_cmd
         ),
 
         # 7. ČVOR ZA PROSLJEĐIVANJE PUTANJE MOTORIMA - OTVARA SE U POSEBNOM TERMINALU
@@ -103,6 +137,6 @@ def generate_launch_description():
             executable="move_robot.py",
             name="move_robot_node",
             output="screen",
-            prefix="xterm -hold -geometry 90x20+600+0 -bg black -fg cyan -title 'MOVE ROBOT NODE' -e"
+            prefix=prefix_cmd
         )
     ])
