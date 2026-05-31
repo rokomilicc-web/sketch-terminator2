@@ -1,0 +1,14 @@
+# Ignoriraj ROS 2 build i lokalne mape ako slučajno zalutaju ovdje
+build/
+install/
+log/
+
+# Ignoriraj Python prerađene datoteke
+__pycache__/
+*.pyc
+
+# Ignoriraj potencijalna virtualna okruženja i IDE konfiguracije
+.venv/
+.vscode/
+.idea/
+.DS_Store
