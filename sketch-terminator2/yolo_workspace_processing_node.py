@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import json
+import cv2
 import rclpy
 from rclpy.node import Node
 
 import numpy as np
 
 from std_msgs.msg import String
+from sensor_msgs.msg import Image
 from yolo_msgs.msg import DetectionArray
+from cv_bridge import CvBridge
 
 
 class YoloWorkspaceProcessingNode(Node):
@@ -52,45 +55,73 @@ class YoloWorkspaceProcessingNode(Node):
         self.yolo_sub = self.create_subscription(DetectionArray, yolo_topic, self.yolo_callback, 10)
         self.positions_pub = self.create_publisher(String, positions_topic, 10)
 
+        # Vizualni debugger
+        self.bridge = CvBridge()
+        self.latest_path = []
+        self.latest_objects = []
+        
+        self.path_sub = self.create_subscription(String, '/planning/path', self.path_callback, 10)
+        self.image_sub = self.create_subscription(Image, '/dbg_image', self.image_callback, 10)
+        self.debug_image_pub = self.create_publisher(Image, '/planning/debug_image', 10)
+
     def pixel_to_robot_frame(self, u, v):
         """
         Pretvara piksel koordinate (u, v) u 3D koordinate (X, Y) u METRIMA
-        unutar baze robota koristeći zraku projekcije, Z_robot = 0 i kalibracijski offset.
+        unutar baze robota pomoću rješavanja presjeka zrake i Z=0 ravnine.
+        Koristi standardnu OpenCV konvenciju (P_cam = R * P_world + t).
         """
-        # 1. Smjer zrake u koordinatnom sustavu kamere (Pinhole model)
+        # 1. Smjer zrake u kameri (Z naprijed = 1.0 kako koristi OpenCV)
         X_c = (u - self.cx) / self.fx
         Y_c = (v - self.cy) / self.fy
+        ray_cam = np.array([X_c, Y_c, 1.0], dtype=np.float64)
 
-        # Okretanje optičke osi kamere sukladno geometriji
-        Z_c = -1.0
-        ray_cam = np.array([X_c, Y_c, Z_c], dtype=np.float64)
+        # R_cam_to_robot iz YAML-a je zapravo R_world_to_cam (OpenCV format)
+        # t_cam_to_robot iz YAML-a je t_world_to_cam (u milimetrima)
+        R = self.R_cam_to_robot
+        t = self.t_cam_to_robot
 
-        # 2. Transformacija smjera zrake u koordinatni sustav baze robota (samo rotacija R)
-        ray_robot = self.R_cam_to_robot.dot(ray_cam)
+        # P_cam = R * P_world + t
+        # s * ray_cam = X_w * R[:,0] + Y_w * R[:,1] + t
+        # X_w * R[:,0] + Y_w * R[:,1] - s * ray_cam = -t
+        M = np.column_stack((R[:, 0], R[:, 1], -ray_cam))
+        
+        try:
+            solution = np.linalg.solve(M, -t)
+            X_w_mm = solution[0]
+            Y_w_mm = solution[1]
+        except np.linalg.LinAlgError:
+            raise RuntimeError("Ray is parallel to the table.")
 
-        # 3. Računanje presjeka zrake s ravninom stola Z_robot = 0
-        if ray_robot[2] == 0:
-            raise RuntimeError("Ray is parallel to the robot base plane; division by zero.")
-
-        s = -self.t_cam_to_robot[2] / ray_robot[2]
-
-        x_robot_raw = self.t_cam_to_robot[0] + s * ray_robot[0]
-        y_robot_raw = self.t_cam_to_robot[1] + s * ray_robot[1]
-
-        # Invertiranje predznaka radi usklađivanja smjera matrice (izvorni korak)
-        x_robot_inverted = -x_robot_raw
-        y_robot_inverted = -y_robot_raw
-
-        # --- PRIMJENA SUSTAVNOG POMAKA (U MILIMETRIMA) ---
-        # Budući da su detektirane vrijednosti veće od stvarnih, oduzimamo offsete
-        x_robot_corrected_mm = x_robot_inverted - 22.0
-        y_robot_corrected_mm = y_robot_inverted - 9.0
-
-        # --- PRETVORBA U METRE ---
-        x_robot_m = x_robot_corrected_mm / 1000.0
-        y_robot_m = y_robot_corrected_mm / 1000.0
+        x_robot_m = X_w_mm / 1000.0
+        y_robot_m = Y_w_mm / 1000.0
 
         return float(x_robot_m), float(y_robot_m)
+
+    def robot_to_pixel_frame(self, x, y):
+        """
+        Pretvara 3D koordinate (X, Y) u METRIMA na bazi robota (Z=0) 
+        nazad u (u, v) piksele na slici s kamere (Inverzna pinhole projekcija).
+        """
+        # Koordinate su u metrima, prebacujemo ih u milimetre (kako su zapisane u t_cam_to_robot)
+        X_w_mm = x * 1000.0
+        Y_w_mm = y * 1000.0
+        
+        P_world = np.array([X_w_mm, Y_w_mm, 0.0], dtype=np.float64)
+        
+        R = self.R_cam_to_robot
+        t = self.t_cam_to_robot
+        
+        # P_cam = R * P_world + t
+        P_cam = R.dot(P_world) + t
+        
+        if P_cam[2] <= 0:
+            return 0, 0 # Točka je iza kamere
+            
+        # Pinhole model projekcije
+        u = (P_cam[0] / P_cam[2]) * self.fx + self.cx
+        v = (P_cam[1] / P_cam[2]) * self.fy + self.cy
+        
+        return int(u), int(v)
 
     def publish_object_positions(self, objects_data):
         msg_out = String()
@@ -105,6 +136,7 @@ class YoloWorkspaceProcessingNode(Node):
         objects_data = []
 
         if len(msg.detections) == 0:
+            self.latest_objects = objects_data
             self.publish_object_positions(objects_data)
             return
 
@@ -163,12 +195,95 @@ class YoloWorkspaceProcessingNode(Node):
                 "x": round(x_robot, 4),
                 "y": round(y_robot, 4),
                 "bbox": bbox_robot,
-                "bbox_corners": bbox_corners_robot
+                "bbox_corners": bbox_corners_robot,
+                "px": int(cx),
+                "py": int(cy)
             })
 
-        # Slanje podataka na positions_topic za Path Planning nodu
+        # Spremanje za vizualizaciju i slanje na positions_topic
+        self.latest_objects = objects_data
         self.publish_object_positions(objects_data)
 
+    def path_callback(self, msg):
+        try:
+            data = json.loads(msg.data)
+            self.latest_path = data.get("path", [])
+        except json.JSONDecodeError:
+            self.get_logger().error("Could not decode path JSON")
+
+    def image_callback(self, msg):
+        try:
+            # ROS Image to OpenCV
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            
+            # --- CRTANJE ISHODIŠTA ROBOTA (x: 0.0, y: 0.0) ---
+            ox, oy = self.robot_to_pixel_frame(0.0, 0.0)
+            # Crveni marker za ishodište baze
+            cv2.drawMarker(cv_image, (ox, oy), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=30, thickness=3)
+            cv2.putText(cv_image, "ORIGIN (0, 0)", (ox + 10, oy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+            # --- CRTANJE OSI KOORDINATNOG SUSTAVA (X=crvena, Y=zelena, dužina 10cm) ---
+            xx, xy = self.robot_to_pixel_frame(0.1, 0.0)
+            yx, yy = self.robot_to_pixel_frame(0.0, 0.1)
+            
+            # X os (crvena - BGR: 0, 0, 255)
+            cv2.arrowedLine(cv_image, (ox, oy), (xx, xy), (0, 0, 255), 3, tipLength=0.2)
+            cv2.putText(cv_image, "X", (xx + 5, xy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            
+            # Y os (zelena - BGR: 0, 255, 0)
+            cv2.arrowedLine(cv_image, (ox, oy), (yx, yy), (0, 255, 0), 3, tipLength=0.2)
+            cv2.putText(cv_image, "Y", (yx + 5, yy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+            # --- CRTANJE POČETNE TOČKE ROBOTA (x: 0.0, y: 0.15) ---
+            rx, ry = self.robot_to_pixel_frame(0.0, 0.15)
+            # Cyan marker "X" s tekstom
+            cv2.drawMarker(cv_image, (rx, ry), (255, 255, 0), markerType=cv2.MARKER_CROSS, markerSize=20, thickness=2)
+            cv2.putText(cv_image, "HOME (0.0, 0.15)", (rx + 10, ry - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+
+            # --- ISPIS KOORDINATA PREPOZNATIH OBJEKATA ---
+            for obj in self.latest_objects:
+                px = obj.get("px")
+                py = obj.get("py")
+                x = obj.get("x")
+                y = obj.get("y")
+                cls = obj.get("class")
+                if px is not None and py is not None:
+                    text = f"{cls}: ({x:.2f}, {y:.2f})"
+                    # Crni obrub za bolju čitljivost teksta
+                    cv2.putText(cv_image, text, (px - 40, py + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+                    # Bijeli tekst iznutra
+                    cv2.putText(cv_image, text, (px - 40, py + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+            # --- CRTANJE PUTANJE AKO POSTOJI ---
+            if self.latest_path:
+                prev_pt = None
+                for p in self.latest_path:
+                    px, py = self.robot_to_pixel_frame(p["x"], p["y"])
+                    
+                    # Crtanje kruga za čvor putanje (Magenta)
+                    cv2.circle(cv_image, (px, py), 6, (255, 0, 255), -1) 
+                    
+                    # Spajanje linijom s prethodnom točkom (Žuta)
+                    if prev_pt is not None:
+                        cv2.line(cv_image, prev_pt, (px, py), (0, 255, 255), 3)
+                    
+                    prev_pt = (px, py)
+
+                # Oznaka Starta (Zeleno) i Cilja (Crveno) ako postoji putanja
+                if len(self.latest_path) >= 2:
+                    sx, sy = self.robot_to_pixel_frame(self.latest_path[0]["x"], self.latest_path[0]["y"])
+                    cv2.circle(cv_image, (sx, sy), 10, (0, 255, 0), -1)
+                    
+                    gx, gy = self.robot_to_pixel_frame(self.latest_path[-1]["x"], self.latest_path[-1]["y"])
+                    cv2.circle(cv_image, (gx, gy), 10, (0, 0, 255), -1)
+
+            # OpenCV to ROS Image
+            out_msg = self.bridge.cv2_to_imgmsg(cv_image, "bgr8")
+            out_msg.header = msg.header
+            self.debug_image_pub.publish(out_msg)
+
+        except Exception as e:
+            self.get_logger().error(f"Error drawing path on image: {e}")
 
 def main(args=None):
     rclpy.init(args=args)

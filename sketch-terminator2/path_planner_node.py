@@ -203,12 +203,23 @@ class PathPlannerNode(Node):
 
     # --- POMOĆNE GEOMETRIJSKE FUNKCIJE (Zadržane i optimizirane) ---
     def segment_intersects_bbox(self, p1, p2, bbox):
-        # Ako je neka točka unutar prepreke, segment je siječe
-        if self.point_inside_bbox(p1, bbox) or self.point_inside_bbox(p2, bbox):
+        # 1. Provjera središta linije (sprječava linije koje idu dijagonalno direktno kroz prepreku)
+        mid = ((p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0)
+        if self.point_inside_bbox(mid, bbox):
             return True
 
-        # Rubovi kutije prepreke
-        x_min, y_min, x_max, y_max = bbox["x_min"], bbox["y_min"], bbox["x_max"], bbox["y_max"]
+        # 2. Smanjujemo rubove kutije za 1 milimetar
+        # Zašto? Zato što graf vidljivosti mora spajati točke s KUTOVIMA prepreke.
+        # Ako ne smanjimo kutiju, linija koja dodiruje kut će biti odbačena jer "siječe rub".
+        eps = 1e-3
+        x_min, y_min = bbox["x_min"] + eps, bbox["y_min"] + eps
+        x_max, y_max = bbox["x_max"] - eps, bbox["y_max"] - eps
+
+        # Ako je bilo koja od krajnjih točaka duboko unutar prepreke
+        if x_min <= p1[0] <= x_max and y_min <= p1[1] <= y_max: return True
+        if x_min <= p2[0] <= x_max and y_min <= p2[1] <= y_max: return True
+
+        # Rubovi SMANJENE kutije prepreke
         corners = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
         edges = [
             (corners[0], corners[1]),
@@ -230,7 +241,7 @@ class PathPlannerNode(Node):
     def segments_intersect(self, p1, p2, q1, q2):
         def orientation(a, b, c):
             value = (b[1] - a[1]) * (c[0] - b[0]) - (b[0] - a[0]) * (c[1] - b[1])
-            if abs(value) < 1e-4: return 0
+            if abs(value) < 1e-9: return 0  # Preciznost za mjerne jedinice u metrima
             return 1 if value > 0 else 2
 
         def on_segment(a, b, c):
