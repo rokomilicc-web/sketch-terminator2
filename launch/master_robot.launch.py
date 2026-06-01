@@ -127,8 +127,7 @@ def generate_launch_description():
             package=package_name,
             executable="generate_smooth_path.py",
             name="smooth_path_generator",
-            output="screen",
-            prefix=prefix_cmd
+            output="screen"
         ),
 
         # 7. ČVOR ZA PROSLJEĐIVANJE PUTANJE MOTORIMA - OTVARA SE U POSEBNOM TERMINALU
@@ -136,8 +135,7 @@ def generate_launch_description():
             package=package_name,
             executable="move_robot.py",
             name="move_robot_node",
-            output="screen",
-            prefix=prefix_cmd
+            output="screen"
         ),
 
         # 11. Pokretanje ROSA AI Agenta

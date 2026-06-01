@@ -69,7 +69,7 @@ class prarobClientNode(Node):
         #if a > 0.0: a = 0.0
         
         self.move_robot([1.56, 1.56, -1.56], [b, g, a])
-        print("kutevi: ", b, ", ", g, ", ", a)
+
         return
     
     def move_robot(self, q, q2):

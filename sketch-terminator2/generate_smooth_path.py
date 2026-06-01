@@ -52,41 +52,41 @@ class GenerateSmoothPath(Node):
         # Glavni navigacijski tajmer (25 Hz)
         self.move_timer = self.create_timer(self.TIMER_PERIOD, self.navigation_loop)
 
-        self.get_logger().info("Čvor generate_smooth_path (VIŠEKRATNI MOD) pokrenut. Čekam prvu poziciju...")
+        self.get_logger().info("Node generate_smooth_path (MULTI-SHOT MODE) started. Waiting for initial pose...")
 
     def initial_pose_callback(self, msg: Point):
         # Ovo se izvršava samo jednom u cijelom radu sustava
         if self.initial_tcp is None:
             self.initial_tcp = [msg.x, msg.y, msg.z]
             self.virtual_pose = [msg.x, msg.y, msg.z]
-            self.get_logger().info(f"Ulovljena prva početna pozicija robota: X={msg.x:.4f}, Y={msg.y:.4f}, Z={msg.z:.4f}")
+            self.get_logger().info(f"Captured initial robot pose: X={msg.x:.4f}, Y={msg.y:.4f}, Z={msg.z:.4f}")
             # Isključujemo pretplatu jer nam pozicija s kinematike više nikada neće trebati
             self.destroy_subscription(self.sub_initial_pose)
 
     def planned_path_callback(self, msg: String):
         # Ako još ne znamo gdje je robot počeo, ignoriraj zahtjev
         if self.virtual_pose is None:
-            self.get_logger().warn("Primljena putanja, ali početna pozicija robota još nije poznata!")
+            self.get_logger().warn("Path received, but initial robot pose is not yet known!")
             return
         
         # Ako robot već izvršava neku putanju, ignoriraj novi zahtjev dok ne završi
         if self.is_busy:
-            self.get_logger().warn("Robot je trenutno zauzet crtanjem! Ignoriram novi zahtjev.")
+            self.get_logger().warn("Robot is currently busy drawing! Ignoring new request.")
             return
 
         try:
             data = json.loads(msg.data)
             path_json = data.get("path", [])
         except json.JSONDecodeError:
-            self.get_logger().error("Greška pri parsiranju JSON-a s /planning/path!")
+            self.get_logger().error("Error parsing JSON from /planning/path!")
             return
 
         if not path_json:
-            self.get_logger().warn("Primljena putanja je prazna!")
+            self.get_logger().warn("Received path is empty!")
             return
 
         planned_points = [[float(pt['x']), float(pt['y']), 0.0] for pt in path_json]
-        self.get_logger().info(f"Primljen NOVI zahtjev za crtanje ({len(planned_points)} točaka). Generiram sekvencu...")
+        self.get_logger().info(f"Received NEW drawing request ({len(planned_points)} points). Generating sequence...")
 
         # --- SLAGANJE TOČAKA PO KORACIMA (Oslanja se na trenutnu virtualnu poziciju) ---
         self.execution_queue = []
@@ -125,7 +125,7 @@ class GenerateSmoothPath(Node):
         # Postavi prvu ciljnu točku i zaključaj čvor za nove zahtjeve dok crtanje traje
         self.current_target_point = self.execution_queue.pop(0)
         self.is_busy = True
-        self.get_logger().info("Gibanje pokrenuto! Šaljem glatke točke...")
+        self.get_logger().info("Motion started! Sending smooth points...")
 
     def navigation_loop(self):
         # Ako nema aktivnog zadatka, tajmer miruje i čeka novu poruku s planera
@@ -138,7 +138,7 @@ class GenerateSmoothPath(Node):
             if self.wait_counter >= self.WAIT_STEPS:
                 self.is_waiting = False
                 self.wait_counter = 0
-                self.get_logger().info("Pauza završena. Nastavljam prema sigurnim točkama...")
+                self.get_logger().info("Pause finished. Continuing towards safe points...")
                 if len(self.execution_queue) > 0:
                     self.current_target_point = self.execution_queue.pop(0)
                 else:
@@ -158,7 +158,7 @@ class GenerateSmoothPath(Node):
             # Provjera za pauzu na kraju crtanja
             if abs(curr_x - self.last_drawing_point[0]) < 0.005 and abs(curr_y - self.last_drawing_point[1]) < 0.005 and abs(curr_z - 0.0) < 0.005:
                 self.is_waiting = True
-                self.get_logger().info("Robot na kraju putanje. Čekam 1 sekundu...")
+                self.get_logger().info("Robot reached end of path. Waiting for 1 second...")
                 return
 
             # Uzmi sljedeću točku iz reda
@@ -171,7 +171,7 @@ class GenerateSmoothPath(Node):
                 distance_to_target = math.sqrt(dx**2 + dy**2 + dz**2)
             else:
                 # KRAJ CJELOKUPNOG GIBANJA ZA OVAJ ZAHTJEV
-                self.get_logger().info("Gibanje završeno! Robot je na (0.0, 0.2, 0.09). Spreman za NOVI zahtjev s planera...")
+                self.get_logger().info("Motion finished! Robot is at (0.0, 0.2, 0.09). Ready for NEW request from planner...")
                 self.current_target_point = None
                 self.is_busy = False # Otključavamo čvor za sljedeće pokretanje!
                 return

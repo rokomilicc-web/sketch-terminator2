@@ -68,18 +68,18 @@ if 'kinematics' not in st.session_state:
 
 # Helper function to sync GUI session state values back to widget keys
 def sync_widget_states():
-    st.session_state.j1_slider = max(-3.14, min(3.14, float(st.session_state.j1_val)))
+    st.session_state.j1_slider = max(-2.9, min(0.0, float(st.session_state.j1_val)))
     st.session_state.j1_text = f"{st.session_state.j1_val:.3f}"
     st.session_state.j2_slider = max(-3.14, min(3.14, float(st.session_state.j2_val)))
     st.session_state.j2_text = f"{st.session_state.j2_val:.3f}"
-    st.session_state.j3_slider = max(-3.14, min(3.14, float(st.session_state.j3_val)))
+    st.session_state.j3_slider = max(-3.14, min(1.7, float(st.session_state.j3_val)))
     st.session_state.j3_text = f"{st.session_state.j3_val:.3f}"
     
-    st.session_state.ik_x_slider = max(-1.0, min(1.0, float(st.session_state.ik_x_val)))
+    st.session_state.ik_x_slider = max(0.07, min(0.45, float(st.session_state.ik_x_val)))
     st.session_state.ik_x_text = f"{st.session_state.ik_x_val:.3f}"
-    st.session_state.ik_y_slider = max(-1.0, min(1.0, float(st.session_state.ik_y_val)))
+    st.session_state.ik_y_slider = max(-0.45, min(0.45, float(st.session_state.ik_y_val)))
     st.session_state.ik_y_text = f"{st.session_state.ik_y_val:.3f}"
-    st.session_state.ik_z_slider = max(-0.5, min(1.0, float(st.session_state.ik_z_val)))
+    st.session_state.ik_z_slider = max(0.0, min(0.09, float(st.session_state.ik_z_val)))
     st.session_state.ik_z_text = f"{st.session_state.ik_z_val:.3f}"
 
 # Function to fetch current joints from ROS 2 on startup
@@ -157,7 +157,7 @@ if 'ros_node' not in st.session_state:
     )
 
     if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = [{"role": "assistant", "content": "Hello! I am Sketch Terminator ROSA. How can I assist you with drawing or path planning today?"}]
+        st.session_state.chat_history = [{"role": "assistant", "content": "Hello! I am Sketch Terminator. How can I assist you with drawing or path planning today?"}]
 
 # Initialize default values
 if 'j1_val' not in st.session_state:
@@ -182,7 +182,10 @@ if 'j1_val' not in st.session_state:
     sync_widget_states()
 
 # Sidebar layout
-st.sidebar.markdown("<h1 style='text-align: center; font-size: 20px; color: #00f2fe; text-shadow: 0 0 10px rgba(0, 242, 254, 0.4);'>SKETCH TERMINATOR</h1>", unsafe_allow_html=True)
+logo_path = os.path.join(os.path.dirname(__file__), "public", "logo.png")
+if os.path.exists(logo_path):
+    st.sidebar.image(logo_path, use_container_width=True)
+st.sidebar.markdown("<h1 style='text-align: center; font-size: 20px; color: #00f2fe; text-shadow: 0 0 10px rgba(0, 242, 254, 0.4); margin-top: -10px;'>SKETCH TERMINATOR</h1>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 @st.fragment(run_every=1.0)
@@ -213,14 +216,24 @@ def publish_joints(j1, j2, j3):
     except Exception:
         pass
 
-def on_joint_change():
-    # Sync IK values from joints
-    x, y, z = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
-
+def safe_joint_update(j1_new, j2_new, j3_new):
+    # Calculate proposed IK values
+    x, y, z = st.session_state.kinematics.get_dk(j2_new, j3_new, j1_new)
+    
+    # Floor collision protection
+    if z < 0.0:
+        st.toast("⚠️ Action denied: This movement would cause the marker to collide with the floor (Z < 0).", icon="🛑")
+        return False
+        
+    st.session_state.j1_val = j1_new
+    st.session_state.j2_val = j2_new
+    st.session_state.j3_val = j3_new
+    
     st.session_state.ik_x_val = float(x)
     st.session_state.ik_y_val = float(y)
     st.session_state.ik_z_val = float(z)
-    publish_joints(st.session_state.j1_val, st.session_state.j2_val, st.session_state.j3_val)
+    publish_joints(j1_new, j2_new, j3_new)
+    return True
 
 def on_ik_change():
     # Solve IK from XYZ
@@ -241,46 +254,45 @@ def on_ik_change():
 
 # Bidirectional sync callbacks
 def update_j1_slider():
-    # Clamp manual slider input to -2.0 as requested for DK mode
-    st.session_state.j1_val = max(-2.0, min(0.0, st.session_state.j1_slider))
-    on_joint_change()
+    proposed = max(-2.0, min(0.0, st.session_state.j1_slider))
+    safe_joint_update(proposed, st.session_state.j2_val, st.session_state.j3_val)
     sync_widget_states()
 
 def update_j1_text():
     try:
         val = float(st.session_state.j1_text)
-        st.session_state.j1_val = max(-2.0, min(0.0, val))
+        proposed = max(-2.0, min(0.0, val))
+        safe_joint_update(proposed, st.session_state.j2_val, st.session_state.j3_val)
     except ValueError:
         pass
-    on_joint_change()
     sync_widget_states()
 
 def update_j2_slider():
-    st.session_state.j2_val = st.session_state.j2_slider
-    on_joint_change()
+    proposed = st.session_state.j2_slider
+    safe_joint_update(st.session_state.j1_val, proposed, st.session_state.j3_val)
     sync_widget_states()
 
 def update_j2_text():
     try:
         val = float(st.session_state.j2_text)
-        st.session_state.j2_val = max(-3.14, min(3.14, val))
+        proposed = max(-3.14, min(3.14, val))
+        safe_joint_update(st.session_state.j1_val, proposed, st.session_state.j3_val)
     except ValueError:
         pass
-    on_joint_change()
     sync_widget_states()
 
 def update_j3_slider():
-    st.session_state.j3_val = st.session_state.j3_slider
-    on_joint_change()
+    proposed = st.session_state.j3_slider
+    safe_joint_update(st.session_state.j1_val, st.session_state.j2_val, proposed)
     sync_widget_states()
 
 def update_j3_text():
     try:
         val = float(st.session_state.j3_text)
-        st.session_state.j3_val = max(-3.14, min(1.7, val))
+        proposed = max(-3.14, min(1.7, val))
+        safe_joint_update(st.session_state.j1_val, st.session_state.j2_val, proposed)
     except ValueError:
         pass
-    on_joint_change()
     sync_widget_states()
 
 def update_ik_x_slider():
@@ -326,7 +338,7 @@ def update_ik_z_text():
     sync_widget_states()
 
 
-tab_control, tab_rosa = st.tabs(["🕹️ Manual Control", "🤖 ROSA AI Chat"])
+tab_control, tab_rosa = st.tabs(["🕹️ Manual Control", "🤖 AI Chat"])
 
 with tab_control:
     col1, col2 = st.columns(2)
@@ -338,7 +350,7 @@ with tab_control:
             # Row 1: Joint 1
             st.markdown("#### Joint 1 (Base/Alpha) [rad]")
             c_sld, c_txt = st.columns([3, 1])
-            c_sld.slider("j1_sld_lbl", -3.14, 3.14, key="j1_slider", on_change=update_j1_slider, label_visibility="collapsed", step=0.01)
+            c_sld.slider("j1_sld_lbl", -2.9, 0.0, key="j1_slider", on_change=update_j1_slider, label_visibility="collapsed", step=0.01)
             c_txt.text_input("j1_txt_lbl", key="j1_text", on_change=update_j1_text, label_visibility="collapsed")
 
             # Row 2: Joint 2
@@ -350,7 +362,7 @@ with tab_control:
             # Row 3: Joint 3
             st.markdown("#### Joint 3 (Elbow/Gama) [rad]")
             c_sld, c_txt = st.columns([3, 1])
-            c_sld.slider("j3_sld_lbl", -3.14, 3.14, key="j3_slider", on_change=update_j3_slider, label_visibility="collapsed", step=0.01)
+            c_sld.slider("j3_sld_lbl", -3.14, 1.7, key="j3_slider", on_change=update_j3_slider, label_visibility="collapsed", step=0.01)
             c_txt.text_input("j3_txt_lbl", key="j3_text", on_change=update_j3_text, label_visibility="collapsed")
 
             st.markdown("<h3 class='glow-text'>Computed Cartesian Pose:</h3>", unsafe_allow_html=True)
@@ -367,19 +379,19 @@ with tab_control:
             # Row 1: X Position
             st.markdown("#### X Position [m]")
             c_sld, c_txt = st.columns([3, 1])
-            c_sld.slider("ik_x_sld_lbl", -1.0, 1.0, key="ik_x_slider", on_change=update_ik_x_slider, label_visibility="collapsed", step=0.005)
+            c_sld.slider("ik_x_sld_lbl", 0.07, 0.45, key="ik_x_slider", on_change=update_ik_x_slider, label_visibility="collapsed", step=0.005)
             c_txt.text_input("ik_x_txt_lbl", key="ik_x_text", on_change=update_ik_x_text, label_visibility="collapsed")
 
             # Row 2: Y Position
             st.markdown("#### Y Position [m]")
             c_sld, c_txt = st.columns([3, 1])
-            c_sld.slider("ik_y_sld_lbl", -1.0, 1.0, key="ik_y_slider", on_change=update_ik_y_slider, label_visibility="collapsed", step=0.005)
+            c_sld.slider("ik_y_sld_lbl", -0.45, 0.45, key="ik_y_slider", on_change=update_ik_y_slider, label_visibility="collapsed", step=0.005)
             c_txt.text_input("ik_y_txt_lbl", key="ik_y_text", on_change=update_ik_y_text, label_visibility="collapsed")
 
             # Row 3: Z Position
             st.markdown("#### Z Position [m]")
             c_sld, c_txt = st.columns([3, 1])
-            c_sld.slider("ik_z_sld_lbl", -0.5, 1.0, key="ik_z_slider", on_change=update_ik_z_slider, label_visibility="collapsed", step=0.005)
+            c_sld.slider("ik_z_sld_lbl", 0.0, 0.09, key="ik_z_slider", on_change=update_ik_z_slider, label_visibility="collapsed", step=0.005)
             c_txt.text_input("ik_z_txt_lbl", key="ik_z_text", on_change=update_ik_z_text, label_visibility="collapsed")
 
             # Calculate IK for display status
