@@ -3,11 +3,10 @@
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
 from sensor_msgs.msg import Image
+from yolo_msgs.msg import DetectionArray, Detection
 from cv_bridge import CvBridge
 import cv2
-import json
 import torch
 from ultralytics import YOLO
 
@@ -60,7 +59,7 @@ class YoloNode(Node):
         self.bridge = CvBridge()
 
         # Publishers
-        self.detections_pub = self.create_publisher(String, detections_topic, 10)
+        self.detections_pub = self.create_publisher(DetectionArray, detections_topic, 10)
         self.debug_pub = self.create_publisher(Image, debug_image_topic, 10)
 
         # Subscription
@@ -95,8 +94,9 @@ class YoloNode(Node):
 
         result = results[0].cpu()
 
-        # Parse detections and prepare JSON payload
-        detections_list = []
+        # Prepare typed DetectionArray message
+        detections_msg = DetectionArray()
+        detections_msg.header = msg.header
         
         # If we have debug visualization enabled, we'll draw on a copy of the image
         if self.use_debug:
@@ -114,23 +114,16 @@ class YoloNode(Node):
                 xywh = box.xywh[0].tolist()
                 cx, cy, w, h = xywh[0], xywh[1], xywh[2], xywh[3]
 
-                detection_dict = {
-                    "class_name": class_name,
-                    "score": score,
-                    "bbox": {
-                        "center": {
-                            "position": {
-                                "x": cx,
-                                "y": cy
-                            }
-                        },
-                        "size": {
-                            "x": w,
-                            "y": h
-                        }
-                    }
-                }
-                detections_list.append(detection_dict)
+                det = Detection()
+                det.class_id = class_id
+                det.class_name = class_name
+                det.score = score
+                det.bbox.center.position.x = float(cx)
+                det.bbox.center.position.y = float(cy)
+                det.bbox.size.x = float(w)
+                det.bbox.size.y = float(h)
+                
+                detections_msg.detections.append(det)
 
                 # Draw bounding box and label for debugging
                 if self.use_debug and dbg_image is not None:
@@ -152,11 +145,8 @@ class YoloNode(Node):
                     cv2.putText(dbg_image, label, (x1, max(y1 - 10, 10)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
-        # Publish detections JSON string
-        payload = {"detections": detections_list}
-        json_msg = String()
-        json_msg.data = json.dumps(payload)
-        self.detections_pub.publish(json_msg)
+        # Publish detections typed message
+        self.detections_pub.publish(detections_msg)
 
         # Publish debug image
         if self.use_debug and dbg_image is not None:

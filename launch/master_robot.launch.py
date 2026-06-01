@@ -3,7 +3,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
 import xacro
-
+from launch.actions import ExecuteProcess
 def generate_launch_description():
     package_name = "sketch-terminator2"
     robot_name = "prarob_manipulator"
@@ -138,5 +138,11 @@ def generate_launch_description():
             name="move_robot_node",
             output="screen",
             prefix=prefix_cmd
+        ),
+
+        # 8. STREAMLIT GUI - HEADLESS
+        ExecuteProcess(
+            cmd=['streamlit', 'run', os.path.join(get_package_share_directory(package_name), 'gui', 'dashboard.py'), '--server.headless', 'true'],
+            output='screen'
         )
     ])
