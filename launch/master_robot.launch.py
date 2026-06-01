@@ -6,10 +6,10 @@ import xacro
 from launch.actions import ExecuteProcess
 def generate_launch_description():
     package_name = "sketch-terminator2"
-    robot_name = "prarob_manipulator"
+    robot_name = "sketch_terminator"
     
     # Putanje do konfiguracijskih datoteka unutar share direktorija paketa
-    rviz_config = os.path.join(get_package_share_directory(package_name), "launch", "prarob_manipulator.rviz")
+    rviz_config = os.path.join(get_package_share_directory(package_name), "rviz", "prarob_manipulator.rviz")
     robot_description = os.path.join(get_package_share_directory(package_name), "urdf", robot_name + ".urdf.xacro")
     robot_description_config = xacro.process_file(robot_description)
     

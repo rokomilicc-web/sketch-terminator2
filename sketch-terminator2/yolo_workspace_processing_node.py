@@ -31,6 +31,11 @@ class YoloWorkspaceProcessingNode(Node):
         self.declare_parameter('R_cam_to_robot', [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
         self.declare_parameter('t_cam_to_robot', [0.0, 0.0, 0.0])
 
+        # Translacijski kalibracijski offset (u metrima)
+        # Ovdje dodajemo fiksni pomak (npr. -2 cm na X osi)
+        self.declare_parameter('offset_x_m', -0.04)
+        self.declare_parameter('offset_y_m', 0.0)
+
         # --- DOHVAĆANJE PARAMETARA U LOKALNE VARIJABLE ---
         yolo_topic = self.get_parameter('yolo_detections_topic').get_parameter_value().string_value
         positions_topic = self.get_parameter('positions_topic').get_parameter_value().string_value
@@ -47,6 +52,10 @@ class YoloWorkspaceProcessingNode(Node):
         # Dohvaćanje vektora translacije (X, Y, Z) u mm
         t_list = self.get_parameter('t_cam_to_robot').get_parameter_value().double_array_value
         self.t_cam_to_robot = np.array(t_list, dtype=np.float64)
+
+        # Dohvaćanje kalibracijskih offseta
+        self.offset_x_m = self.get_parameter('offset_x_m').get_parameter_value().double_value
+        self.offset_y_m = self.get_parameter('offset_y_m').get_parameter_value().double_value
 
         self.get_logger().info("Successfully loaded camera parameters from configuration file!")
         self.get_logger().info(f"Loaded Z-height (camera distance): {self.t_cam_to_robot[2]:.2f} mm")
@@ -92,8 +101,8 @@ class YoloWorkspaceProcessingNode(Node):
         except np.linalg.LinAlgError:
             raise RuntimeError("Ray is parallel to the table.")
 
-        x_robot_m = X_w_mm / 1000.0
-        y_robot_m = Y_w_mm / 1000.0
+        x_robot_m = (X_w_mm / 1000.0) + self.offset_x_m
+        y_robot_m = (Y_w_mm / 1000.0) + self.offset_y_m
 
         return float(x_robot_m), float(y_robot_m)
 
@@ -102,9 +111,9 @@ class YoloWorkspaceProcessingNode(Node):
         Pretvara 3D koordinate (X, Y) u METRIMA na bazi robota (Z=0) 
         nazad u (u, v) piksele na slici s kamere (Inverzna pinhole projekcija).
         """
-        # Koordinate su u metrima, prebacujemo ih u milimetre (kako su zapisane u t_cam_to_robot)
-        X_w_mm = x * 1000.0
-        Y_w_mm = y * 1000.0
+        # Koordinate su u metrima, prvo mičemo offset, pa prebacujemo u milimetre
+        X_w_mm = (x - self.offset_x_m) * 1000.0
+        Y_w_mm = (y - self.offset_y_m) * 1000.0
         
         P_world = np.array([X_w_mm, Y_w_mm, 0.0], dtype=np.float64)
         

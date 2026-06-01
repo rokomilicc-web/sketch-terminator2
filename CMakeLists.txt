@@ -35,7 +35,7 @@ install(PROGRAMS
 
 # 2. INSTALACIJA SVIH RESURSA (Launch datoteke, URDF model, YAML konfiguracije, Meshes, GUI)
 install(
-  DIRECTORY config launch urdf controllers meshes gui
+  DIRECTORY config launch urdf controllers meshes gui rviz
   DESTINATION share/${PROJECT_NAME}
 )
 

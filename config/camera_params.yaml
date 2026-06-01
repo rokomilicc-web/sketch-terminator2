@@ -9,7 +9,7 @@
       image_width: 640
       image_height: 480
       camera_name: "camera"
-      camera_info_url: "package://prarob_calib/config/camera_calibration_params.yaml"
+      camera_info_url: "package://sketch-terminator2/config/camera_calibration_params.yaml"
       brightness: -1
       contrast: -1
       saturation: -1
