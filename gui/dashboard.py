@@ -1,9 +1,12 @@
 import os
 import time
+import queue
+import json
 import streamlit as st
 import rclpy
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from sensor_msgs.msg import JointState
+from std_msgs.msg import String
 from builtin_interfaces.msg import Duration
 
 from kinematics import Kinematics
@@ -65,18 +68,18 @@ if 'kinematics' not in st.session_state:
 
 # Helper function to sync GUI session state values back to widget keys
 def sync_widget_states():
-    st.session_state.j1_slider = float(st.session_state.j1_val)
+    st.session_state.j1_slider = max(-3.14, min(3.14, float(st.session_state.j1_val)))
     st.session_state.j1_text = f"{st.session_state.j1_val:.3f}"
-    st.session_state.j2_slider = float(st.session_state.j2_val)
+    st.session_state.j2_slider = max(-3.14, min(3.14, float(st.session_state.j2_val)))
     st.session_state.j2_text = f"{st.session_state.j2_val:.3f}"
-    st.session_state.j3_slider = float(st.session_state.j3_val)
+    st.session_state.j3_slider = max(-3.14, min(3.14, float(st.session_state.j3_val)))
     st.session_state.j3_text = f"{st.session_state.j3_val:.3f}"
     
-    st.session_state.ik_x_slider = float(st.session_state.ik_x_val)
+    st.session_state.ik_x_slider = max(-1.0, min(1.0, float(st.session_state.ik_x_val)))
     st.session_state.ik_x_text = f"{st.session_state.ik_x_val:.3f}"
-    st.session_state.ik_y_slider = float(st.session_state.ik_y_val)
+    st.session_state.ik_y_slider = max(-1.0, min(1.0, float(st.session_state.ik_y_val)))
     st.session_state.ik_y_text = f"{st.session_state.ik_y_val:.3f}"
-    st.session_state.ik_z_slider = float(st.session_state.ik_z_val)
+    st.session_state.ik_z_slider = max(-0.5, min(1.0, float(st.session_state.ik_z_val)))
     st.session_state.ik_z_text = f"{st.session_state.ik_z_val:.3f}"
 
 # Function to fetch current joints from ROS 2 on startup
@@ -118,6 +121,44 @@ if 'ros_node' not in st.session_state:
         10
     )
 
+    st.session_state.command_pub = node.create_publisher(
+        String,
+        '/agent/command',
+        10
+    )
+    st.session_state.token_queue = queue.Queue()
+    st.session_state.response_queue = queue.Queue()
+
+    # Subscriptions
+    st.session_state.token_sub = node.create_subscription(
+        String,
+        '/agent/tokens',
+        lambda msg: st.session_state.token_queue.put(msg.data),
+        10
+    )
+    st.session_state.response_sub = node.create_subscription(
+        String,
+        '/agent/response',
+        (lambda msg: st.session_state.response_queue.put(msg.data)),
+        10
+    )
+    
+    st.session_state.true_joints = [0.0, 0.0, 0.0]
+    def js_callback(msg):
+        name_map = {n: i for i, n in enumerate(msg.name)}
+        if 'joint1' in name_map and 'joint2' in name_map and 'joint3' in name_map:
+            st.session_state.true_joints = [
+                msg.position[name_map['joint1']],
+                msg.position[name_map['joint2']],
+                msg.position[name_map['joint3']]
+            ]
+    st.session_state.joint_state_sub = node.create_subscription(
+        JointState, '/joint_states', js_callback, 10
+    )
+
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = [{"role": "assistant", "content": "Hello! I am Sketch Terminator ROSA. How can I assist you with drawing or path planning today?"}]
+
 # Initialize default values
 if 'j1_val' not in st.session_state:
     # Fetch current joint states from hardware
@@ -141,15 +182,25 @@ if 'j1_val' not in st.session_state:
     sync_widget_states()
 
 # Sidebar layout
-st.sidebar.markdown("<h1 style='text-align: center; font-size: 20px; color: #00f2fe; text-shadow: 0 0 10px rgba(0, 242, 254, 0.4);'>STANDALONE KINEMATICS</h1>", unsafe_allow_html=True)
+st.sidebar.markdown("<h1 style='text-align: center; font-size: 20px; color: #00f2fe; text-shadow: 0 0 10px rgba(0, 242, 254, 0.4);'>SKETCH TERMINATOR</h1>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-st.sidebar.markdown("### 🦾 Joint Status")
-st.sidebar.markdown(f"- **J1 (Base - Alpha):** `{st.session_state.j1_val:.3f} rad`")
-st.sidebar.markdown(f"- **J2 (Shoulder - Beta):** `{st.session_state.j2_val:.3f} rad`")
-st.sidebar.markdown(f"- **J3 (Elbow - Gama):** `{st.session_state.j3_val:.3f} rad`")
-st.sidebar.info("ROS 2 is ACTIVE. GUI is publishing to `/joint_trajectory_controller/joint_trajectory`.")
+@st.fragment(run_every=1.0)
+def live_sidebar_status():
+    if 'ros_node' in st.session_state:
+        rclpy.spin_once(st.session_state.ros_node, timeout_sec=0.01)
+    
+    st.markdown("### 🦾 Joint Status")
+    if 'true_joints' in st.session_state:
+        j = st.session_state.true_joints
+        st.markdown(f"- **J1 (Base - Alpha):** `{j[2]:.3f} rad`")
+        st.markdown(f"- **J2 (Shoulder - Beta):** `{j[0]:.3f} rad`")
+        st.markdown(f"- **J3 (Elbow - Gama):** `{j[1]:.3f} rad`")
+    else:
+        st.markdown("Waiting for /joint_states...")
 
+with st.sidebar:
+    live_sidebar_status()
 def publish_joints(j1, j2, j3):
     try:
         msg = JointTrajectory()
@@ -166,18 +217,6 @@ def on_joint_change():
     # Sync IK values from joints
     x, y, z = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
 
-    # Prevent moving through the floor (Z < 0)
-    if z < 0.0:
-        st.toast("⚠️ Odbijeno: Ovaj pokret bi zabio robota u pod (Z < 0)!", icon="🛑")
-        try:
-            b_val, g_val, a_val = st.session_state.kinematics.get_ik(st.session_state.ik_x_val, st.session_state.ik_y_val, st.session_state.ik_z_val)
-            st.session_state.j1_val = float(a_val)
-            st.session_state.j2_val = float(b_val)
-            st.session_state.j3_val = float(g_val)
-        except Exception:
-            pass
-        return
-
     st.session_state.ik_x_val = float(x)
     st.session_state.ik_y_val = float(y)
     st.session_state.ik_z_val = float(z)
@@ -187,16 +226,6 @@ def on_ik_change():
     # Solve IK from XYZ
     try:
         b_val, g_val, a_val = st.session_state.kinematics.get_ik(st.session_state.ik_x_val, st.session_state.ik_y_val, st.session_state.ik_z_val)
-        
-        # Check Joint limits
-        if g_val > 1.7 or a_val < -2.9 or a_val > 0.0:
-            st.toast("⚠️ Odbijeno: Ta pozicija zahtijeva kuteve koji prelaze limit zglobova!", icon="🛑")
-            # Revert Cartesian to last valid Joint position
-            x, y, z = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
-            st.session_state.ik_x_val = float(x)
-            st.session_state.ik_y_val = float(y)
-            st.session_state.ik_z_val = float(z)
-            return
 
         st.session_state.j1_val = float(a_val)
         st.session_state.j2_val = float(b_val)
@@ -262,7 +291,7 @@ def update_ik_x_slider():
 def update_ik_x_text():
     try:
         val = float(st.session_state.ik_x_text)
-        st.session_state.ik_x_val = max(-0.45, min(0.45, val))
+        st.session_state.ik_x_val = max(-1.0, min(1.0, val))
     except ValueError:
         pass
     on_ik_change()
@@ -276,7 +305,7 @@ def update_ik_y_slider():
 def update_ik_y_text():
     try:
         val = float(st.session_state.ik_y_text)
-        st.session_state.ik_y_val = max(-0.45, min(0.45, val))
+        st.session_state.ik_y_val = max(-1.0, min(1.0, val))
     except ValueError:
         pass
     on_ik_change()
@@ -290,77 +319,168 @@ def update_ik_z_slider():
 def update_ik_z_text():
     try:
         val = float(st.session_state.ik_z_text)
-        st.session_state.ik_z_val = max(0.0, min(0.20, val))
+        st.session_state.ik_z_val = max(-0.5, min(1.0, val))
     except ValueError:
         pass
     on_ik_change()
     sync_widget_states()
 
 
-col1, col2 = st.columns(2)
+tab_control, tab_rosa = st.tabs(["🕹️ Manual Control", "🤖 ROSA AI Chat"])
 
-with col1:
-    with st.container(border=True):
-        st.markdown("<h2>Direct Kinematics</h2>", unsafe_allow_html=True)
+with tab_control:
+    col1, col2 = st.columns(2)
+
+    with col1:
+        with st.container(border=True):
+            st.markdown("<h2>Direct Kinematics</h2>", unsafe_allow_html=True)
     
-        # Row 1: Joint 1
-        st.markdown("#### Joint 1 (Base/Alpha) [rad]")
-        c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("j1_sld_lbl", -2.9, 0.0, key="j1_slider", on_change=update_j1_slider, label_visibility="collapsed", step=0.01)
-        c_txt.text_input("j1_txt_lbl", key="j1_text", on_change=update_j1_text, label_visibility="collapsed")
+            # Row 1: Joint 1
+            st.markdown("#### Joint 1 (Base/Alpha) [rad]")
+            c_sld, c_txt = st.columns([3, 1])
+            c_sld.slider("j1_sld_lbl", -3.14, 3.14, key="j1_slider", on_change=update_j1_slider, label_visibility="collapsed", step=0.01)
+            c_txt.text_input("j1_txt_lbl", key="j1_text", on_change=update_j1_text, label_visibility="collapsed")
 
-        # Row 2: Joint 2
-        st.markdown("#### Joint 2 (Shoulder/Beta) [rad]")
-        c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("j2_sld_lbl", -3.14, 3.14, key="j2_slider", on_change=update_j2_slider, label_visibility="collapsed", step=0.01)
-        c_txt.text_input("j2_txt_lbl", key="j2_text", on_change=update_j2_text, label_visibility="collapsed")
+            # Row 2: Joint 2
+            st.markdown("#### Joint 2 (Shoulder/Beta) [rad]")
+            c_sld, c_txt = st.columns([3, 1])
+            c_sld.slider("j2_sld_lbl", -3.14, 3.14, key="j2_slider", on_change=update_j2_slider, label_visibility="collapsed", step=0.01)
+            c_txt.text_input("j2_txt_lbl", key="j2_text", on_change=update_j2_text, label_visibility="collapsed")
 
-        # Row 3: Joint 3
-        st.markdown("#### Joint 3 (Elbow/Gama) [rad]")
-        c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("j3_sld_lbl", -3.14, 1.7, key="j3_slider", on_change=update_j3_slider, label_visibility="collapsed", step=0.01)
-        c_txt.text_input("j3_txt_lbl", key="j3_text", on_change=update_j3_text, label_visibility="collapsed")
+            # Row 3: Joint 3
+            st.markdown("#### Joint 3 (Elbow/Gama) [rad]")
+            c_sld, c_txt = st.columns([3, 1])
+            c_sld.slider("j3_sld_lbl", -3.14, 3.14, key="j3_slider", on_change=update_j3_slider, label_visibility="collapsed", step=0.01)
+            c_txt.text_input("j3_txt_lbl", key="j3_text", on_change=update_j3_text, label_visibility="collapsed")
 
-        st.markdown("<h3 class='glow-text'>Computed Cartesian Pose:</h3>", unsafe_allow_html=True)
-        # DK calculations
-        x_dk, y_dk, z_dk = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
-        st.code(f"X: {x_dk*1000.0:.1f} mm  ({x_dk:.4f} m)\n"
-                f"Y: {y_dk*1000.0:.1f} mm  ({y_dk:.4f} m)\n"
-                f"Z: {z_dk*1000.0:.1f} mm  ({z_dk:.4f} m)")
+            st.markdown("<h3 class='glow-text'>Computed Cartesian Pose:</h3>", unsafe_allow_html=True)
+            # DK calculations
+            x_dk, y_dk, z_dk = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
+            st.code(f"X: {x_dk*1000.0:.1f} mm  ({x_dk:.4f} m)\n"
+                    f"Y: {y_dk*1000.0:.1f} mm  ({y_dk:.4f} m)\n"
+                    f"Z: {z_dk*1000.0:.1f} mm  ({z_dk:.4f} m)")
 
-with col2:
+    with col2:
+        with st.container(border=True):
+            st.markdown("<h2>Inverse Kinematics</h2>", unsafe_allow_html=True)
+
+            # Row 1: X Position
+            st.markdown("#### X Position [m]")
+            c_sld, c_txt = st.columns([3, 1])
+            c_sld.slider("ik_x_sld_lbl", -1.0, 1.0, key="ik_x_slider", on_change=update_ik_x_slider, label_visibility="collapsed", step=0.005)
+            c_txt.text_input("ik_x_txt_lbl", key="ik_x_text", on_change=update_ik_x_text, label_visibility="collapsed")
+
+            # Row 2: Y Position
+            st.markdown("#### Y Position [m]")
+            c_sld, c_txt = st.columns([3, 1])
+            c_sld.slider("ik_y_sld_lbl", -1.0, 1.0, key="ik_y_slider", on_change=update_ik_y_slider, label_visibility="collapsed", step=0.005)
+            c_txt.text_input("ik_y_txt_lbl", key="ik_y_text", on_change=update_ik_y_text, label_visibility="collapsed")
+
+            # Row 3: Z Position
+            st.markdown("#### Z Position [m]")
+            c_sld, c_txt = st.columns([3, 1])
+            c_sld.slider("ik_z_sld_lbl", -0.5, 1.0, key="ik_z_slider", on_change=update_ik_z_slider, label_visibility="collapsed", step=0.005)
+            c_txt.text_input("ik_z_txt_lbl", key="ik_z_text", on_change=update_ik_z_text, label_visibility="collapsed")
+
+            # Calculate IK for display status
+            try:
+                b_val, g_val, a_val = st.session_state.kinematics.get_ik(st.session_state.ik_x_val, st.session_state.ik_y_val, st.session_state.ik_z_val)
+                ik_success = True
+            except Exception:
+                ik_success = False
+
+            st.markdown("<h3 class='glow-text'>Computed Joint Values:</h3>", unsafe_allow_html=True)
+            if ik_success:
+                st.code(f"J1 (Alpha): {a_val:.4f} rad ({a_val * 180.0 / 3.1415:.1f}°)\n"
+                        f"J2 (Beta):  {b_val:.4f} rad ({b_val * 180.0 / 3.1415:.1f}°)\n"
+                        f"J3 (Gama):  {g_val:.4f} rad ({g_val * 180.0 / 3.1415:.1f}°)")
+            else:
+                st.error("IK Resolution Failed: Target is out of reach or mathematically invalid.")
+with tab_rosa:
     with st.container(border=True):
-        st.markdown("<h2>Inverse Kinematics</h2>", unsafe_allow_html=True)
+        st.markdown("<h2>ROSA Autonomous AI Command Center</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='color:#a0aec0;'>Interact with the robotic system using natural language instructions.</p>", unsafe_allow_html=True)
+        st.markdown("---")
 
-        # Row 1: X Position
-        st.markdown("#### X Position [m]")
-        c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("ik_x_sld_lbl", -0.45, 0.45, key="ik_x_slider", on_change=update_ik_x_slider, label_visibility="collapsed", step=0.005)
-        c_txt.text_input("ik_x_txt_lbl", key="ik_x_text", on_change=update_ik_x_text, label_visibility="collapsed")
+        # Render Chat History in premium chat bubbles
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-        # Row 2: Y Position
-        st.markdown("#### Y Position [m]")
-        c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("ik_y_sld_lbl", -0.45, 0.45, key="ik_y_slider", on_change=update_ik_y_slider, label_visibility="collapsed", step=0.005)
-        c_txt.text_input("ik_y_txt_lbl", key="ik_y_text", on_change=update_ik_y_text, label_visibility="collapsed")
+        # Modern chat input box
+        command = st.chat_input("Enter natural language request (e.g., 'go from car to traffic light avoiding cat')...")
 
-        # Row 3: Z Position
-        st.markdown("#### Z Position [m]")
-        c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("ik_z_sld_lbl", 0.0, 0.20, key="ik_z_slider", on_change=update_ik_z_slider, label_visibility="collapsed", step=0.005)
-        c_txt.text_input("ik_z_txt_lbl", key="ik_z_text", on_change=update_ik_z_text, label_visibility="collapsed")
+        if command:
+            # Add user prompt to history and render it immediately
+            st.session_state.chat_history.append({"role": "user", "content": command})
+            with st.chat_message("user"):
+                st.markdown(command)
 
-        # Calculate IK for display status
-        try:
-            b_val, g_val, a_val = st.session_state.kinematics.get_ik(st.session_state.ik_x_val, st.session_state.ik_y_val, st.session_state.ik_z_val)
-            ik_success = True
-        except Exception:
-            ik_success = False
+            # Assistant generation block
+            with st.chat_message("assistant"):
+                status_container = st.empty()
+                response_container = st.empty()
+                
+                # Publish command to ROS 2 topic
+                cmd_msg = String()
+                cmd_msg.data = command
+                st.session_state.command_pub.publish(cmd_msg)
+                
+                # Clear queues
+                st.session_state.token_queue = queue.Queue()
+                st.session_state.response_queue = queue.Queue()
 
-        st.markdown("<h3 class='glow-text'>Computed Joint Values:</h3>", unsafe_allow_html=True)
-        if ik_success:
-            st.code(f"J1 (Alpha): {a_val:.4f} rad ({a_val * 180.0 / 3.1415:.1f}°)\n"
-                    f"J2 (Beta):  {b_val:.4f} rad ({b_val * 180.0 / 3.1415:.1f}°)\n"
-                    f"J3 (Gama):  {g_val:.4f} rad ({g_val * 180.0 / 3.1415:.1f}°)")
-        else:
-            st.error("IK Resolution Failed: Target is out of reach or mathematically invalid.")
+                full_text = ""
+                completed = False
+                start_time = time.time()
+                timeout_limit = 60.0  # 60s max execution time
+                
+                # ChatGPT-like loading/thinking spinner wrapper
+                with st.spinner("Agent is thinking..."):
+                    status_container.info("🧠 Initializing ROSA reasoning process...")
+                    
+                    while (time.time() - start_time) < timeout_limit:
+                         # Spin once to fetch latest ROS 2 subscription messages
+                         rclpy.spin_once(st.session_state.ros_node, timeout_sec=0.02)
+                         
+                         # Check for completed response
+                         if not st.session_state.response_queue.empty():
+                             st.session_state.response_queue.get()
+                             completed = True
+                             break
+
+                         # Process all accumulated streaming tokens/events
+                         while not st.session_state.token_queue.empty():
+                             try:
+                                 event_data_str = st.session_state.token_queue.get_nowait()
+                                 event = json.loads(event_data_str)
+                                 kind = event.get("type", "")
+                                 
+                                 if kind == "token":
+                                     full_text += event.get("content", "")
+                                     response_container.markdown(full_text)
+                                     start_time = time.time()  # Keep-alive on new token receipt
+                                 elif kind == "tool_start":
+                                     tool_name = event.get("content", "tool")
+                                     status_container.info(f"⚙️ Executing robotic tool: `{tool_name}`...")
+                                     start_time = time.time()
+                                 elif kind == "tool_end":
+                                     tool_name = event.get("content", "tool")
+                                     status_container.success(f"✅ Tool `{tool_name}` completed successfully.")
+                                     start_time = time.time()
+                                 elif kind == "error":
+                                     err_msg = event.get("content", "Unknown error")
+                                     st.error(f"❌ ROSA Error: {err_msg}")
+                                     completed = True
+                                     break
+                             except Exception:
+                                 pass
+                         
+                         if completed:
+                             break
+
+                    if completed:
+                        st.session_state.chat_history.append({"role": "assistant", "content": full_text})
+                        status_container.empty() # Clean up status box
+                    else:
+                        st.warning("⚠️ Execution timed out or no agent_node is currently running in the background.")

@@ -54,19 +54,19 @@ class prarobClientNode(Node):
         g = math.pi - g1
         #if g < 0.0: g = 0.0
         #if b < math.pi /2 : b = math.pi / 2
-        if a < math.pi * -0.7: a = math.pi * -0.7
-        if a > math.pi * 0.7: a = math.pi * 0.7
+        #if a < math.pi * -0.7: a = math.pi * -0.7
+        #if a > math.pi * 0.7: a = math.pi * 0.7
         a -= math.pi/2
         b = math.pi/2 - b
         a = wrap_to_pi(a)
         b = wrap_to_pi(b)
         g = wrap_to_pi(g)
         
-        # Ogranicenja kuteva zglobova
-        if g > 1.7: g = 1.7
+        # Ogranicenja kuteva zglobova (privremeno uklonjena)
+        #if g > 1.7: g = 1.7
         
-        if a < -2.9: a = -2.9
-        if a > 0.0: a = 0.0
+        #if a < -2.9: a = -2.9
+        #if a > 0.0: a = 0.0
         
         self.move_robot([1.56, 1.56, -1.56], [b, g, a])
         print("kutevi: ", b, ", ", g, ", ", a)

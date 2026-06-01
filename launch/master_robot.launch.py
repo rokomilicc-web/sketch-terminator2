@@ -140,6 +140,14 @@ def generate_launch_description():
             prefix=prefix_cmd
         ),
 
+        # 11. Pokretanje ROSA AI Agenta
+        Node(
+            package="sketch-terminator2",
+            executable="agent_node.py",
+            name="agent_node",
+            output="screen"
+        ),
+
         # 8. STREAMLIT GUI - HEADLESS
         ExecuteProcess(
             cmd=['streamlit', 'run', os.path.join(get_package_share_directory(package_name), 'gui', 'dashboard.py'), '--server.headless', 'true'],

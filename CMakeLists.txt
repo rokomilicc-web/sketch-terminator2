@@ -28,6 +28,11 @@ install(PROGRAMS
   sketch-terminator2/kinematika.py
   sketch-terminator2/generate_smooth_path.py
   sketch-terminator2/yolo_node.py
+  sketch-terminator2/agent_node.py
+  sketch-terminator2/agent.py
+  sketch-terminator2/tools.py
+  sketch-terminator2/ros2_introspection.py
+  sketch-terminator2/kinematics.py
   scripts/camera_to_world.py
   DESTINATION lib/${PROJECT_NAME}
 )
