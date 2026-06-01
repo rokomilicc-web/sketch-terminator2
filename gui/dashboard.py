@@ -156,7 +156,7 @@ def publish_joints(j1, j2, j3):
         msg.joint_names = ['joint1', 'joint2', 'joint3']
         point = JointTrajectoryPoint()
         point.positions = [float(j2), float(j3), float(j1)]
-        point.time_from_start = Duration(sec=0, nanosec=150000000) # 150ms for smooth tracking
+        point.time_from_start = Duration(sec=1, nanosec=500000000) # 1.5 seconds for slower, safer movement from GUI
         msg.points.append(point)
         st.session_state.joint_pub.publish(msg)
     except Exception:
@@ -165,6 +165,19 @@ def publish_joints(j1, j2, j3):
 def on_joint_change():
     # Sync IK values from joints
     x, y, z = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
+
+    # Prevent moving through the floor (Z < 0)
+    if z < 0.0:
+        st.toast("⚠️ Odbijeno: Ovaj pokret bi zabio robota u pod (Z < 0)!", icon="🛑")
+        try:
+            b_val, g_val, a_val = st.session_state.kinematics.get_ik(st.session_state.ik_x_val, st.session_state.ik_y_val, st.session_state.ik_z_val)
+            st.session_state.j1_val = float(a_val)
+            st.session_state.j2_val = float(b_val)
+            st.session_state.j3_val = float(g_val)
+        except Exception:
+            pass
+        return
+
     st.session_state.ik_x_val = float(x)
     st.session_state.ik_y_val = float(y)
     st.session_state.ik_z_val = float(z)
@@ -174,23 +187,40 @@ def on_ik_change():
     # Solve IK from XYZ
     try:
         b_val, g_val, a_val = st.session_state.kinematics.get_ik(st.session_state.ik_x_val, st.session_state.ik_y_val, st.session_state.ik_z_val)
+        
+        # Check Joint limits
+        if g_val > 1.7 or a_val < -2.9 or a_val > 0.0:
+            st.toast("⚠️ Odbijeno: Ta pozicija zahtijeva kuteve koji prelaze limit zglobova!", icon="🛑")
+            # Revert Cartesian to last valid Joint position
+            x, y, z = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
+            st.session_state.ik_x_val = float(x)
+            st.session_state.ik_y_val = float(y)
+            st.session_state.ik_z_val = float(z)
+            return
+
         st.session_state.j1_val = float(a_val)
         st.session_state.j2_val = float(b_val)
         st.session_state.j3_val = float(g_val)
         publish_joints(a_val, b_val, g_val)
     except Exception:
-        pass # Out of reach
+        st.toast("⚠️ Greška: Točka je matematički nedostižna!", icon="🛑")
+        # Revert Cartesian
+        x, y, z = st.session_state.kinematics.get_dk(st.session_state.j2_val, st.session_state.j3_val, st.session_state.j1_val)
+        st.session_state.ik_x_val = float(x)
+        st.session_state.ik_y_val = float(y)
+        st.session_state.ik_z_val = float(z)
 
 # Bidirectional sync callbacks
 def update_j1_slider():
-    st.session_state.j1_val = st.session_state.j1_slider
+    # Clamp manual slider input to -2.0 as requested for DK mode
+    st.session_state.j1_val = max(-2.0, min(0.0, st.session_state.j1_slider))
     on_joint_change()
     sync_widget_states()
 
 def update_j1_text():
     try:
         val = float(st.session_state.j1_text)
-        st.session_state.j1_val = max(-3.14, min(3.14, val))
+        st.session_state.j1_val = max(-2.0, min(0.0, val))
     except ValueError:
         pass
     on_joint_change()
@@ -218,7 +248,7 @@ def update_j3_slider():
 def update_j3_text():
     try:
         val = float(st.session_state.j3_text)
-        st.session_state.j3_val = max(-3.14, min(3.14, val))
+        st.session_state.j3_val = max(-3.14, min(1.7, val))
     except ValueError:
         pass
     on_joint_change()
@@ -260,7 +290,7 @@ def update_ik_z_slider():
 def update_ik_z_text():
     try:
         val = float(st.session_state.ik_z_text)
-        st.session_state.ik_z_val = max(-0.05, min(0.20, val))
+        st.session_state.ik_z_val = max(0.0, min(0.20, val))
     except ValueError:
         pass
     on_ik_change()
@@ -272,12 +302,11 @@ col1, col2 = st.columns(2)
 with col1:
     with st.container(border=True):
         st.markdown("<h2>Direct Kinematics</h2>", unsafe_allow_html=True)
-        st.markdown("<p style='color:#a0aec0;'>Test Joint-to-Cartesian (DK) calculation.</p>", unsafe_allow_html=True)
-        
+    
         # Row 1: Joint 1
         st.markdown("#### Joint 1 (Base/Alpha) [rad]")
         c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("j1_sld_lbl", -3.14, 3.14, key="j1_slider", on_change=update_j1_slider, label_visibility="collapsed", step=0.01)
+        c_sld.slider("j1_sld_lbl", -2.9, 0.0, key="j1_slider", on_change=update_j1_slider, label_visibility="collapsed", step=0.01)
         c_txt.text_input("j1_txt_lbl", key="j1_text", on_change=update_j1_text, label_visibility="collapsed")
 
         # Row 2: Joint 2
@@ -289,7 +318,7 @@ with col1:
         # Row 3: Joint 3
         st.markdown("#### Joint 3 (Elbow/Gama) [rad]")
         c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("j3_sld_lbl", -3.14, 3.14, key="j3_slider", on_change=update_j3_slider, label_visibility="collapsed", step=0.01)
+        c_sld.slider("j3_sld_lbl", -3.14, 1.7, key="j3_slider", on_change=update_j3_slider, label_visibility="collapsed", step=0.01)
         c_txt.text_input("j3_txt_lbl", key="j3_text", on_change=update_j3_text, label_visibility="collapsed")
 
         st.markdown("<h3 class='glow-text'>Computed Cartesian Pose:</h3>", unsafe_allow_html=True)
@@ -302,7 +331,6 @@ with col1:
 with col2:
     with st.container(border=True):
         st.markdown("<h2>Inverse Kinematics</h2>", unsafe_allow_html=True)
-        st.markdown("<p style='color:#a0aec0;'>Test Cartesian-to-Joint (IK) calculation.</p>", unsafe_allow_html=True)
 
         # Row 1: X Position
         st.markdown("#### X Position [m]")
@@ -319,7 +347,7 @@ with col2:
         # Row 3: Z Position
         st.markdown("#### Z Position [m]")
         c_sld, c_txt = st.columns([3, 1])
-        c_sld.slider("ik_z_sld_lbl", -0.05, 0.20, key="ik_z_slider", on_change=update_ik_z_slider, label_visibility="collapsed", step=0.005)
+        c_sld.slider("ik_z_sld_lbl", 0.0, 0.20, key="ik_z_slider", on_change=update_ik_z_slider, label_visibility="collapsed", step=0.005)
         c_txt.text_input("ik_z_txt_lbl", key="ik_z_text", on_change=update_ik_z_text, label_visibility="collapsed")
 
         # Calculate IK for display status

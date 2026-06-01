@@ -35,6 +35,8 @@ class prarobClientNode(Node):
         x = msg.x
         y = msg.y
         z = msg.z
+        
+        if z < 0.0: z = 0.0
         if z >= 0.09: z = 0.09
         h1 = 0.09 - z
         # x, y i z vrha markera na papiru, a, b, g kutevi izračunati inverznom kinematikom, z ne može biti veći od 0.09m
@@ -60,6 +62,12 @@ class prarobClientNode(Node):
         b = wrap_to_pi(b)
         g = wrap_to_pi(g)
         
+        # Ogranicenja kuteva zglobova
+        if g > 1.7: g = 1.7
+        
+        if a < -2.9: a = -2.9
+        if a > 0.0: a = 0.0
+        
         self.move_robot([1.56, 1.56, -1.56], [b, g, a])
         print("kutevi: ", b, ", ", g, ", ", a)
         return
@@ -75,7 +83,7 @@ class prarobClientNode(Node):
         goal_point.positions.append(q2[0])
         goal_point.positions.append(q2[1])
         goal_point.positions.append(q2[2])
-        goal_point.time_from_start = Duration(seconds=0.01).to_msg()
+        goal_point.time_from_start = Duration(seconds=0.04).to_msg()
 
         goal_trajectory.points.append(goal_point)
 
