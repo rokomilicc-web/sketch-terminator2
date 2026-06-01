@@ -12,6 +12,12 @@ camera_config_path = os.path.join(
         'camera_params.yaml'
         )
 
+calib_config_path = os.path.join(
+        get_package_share_directory('sketch-terminator2'),
+        'config',
+        'calib_config.yaml'
+        )
+
 
 def generate_launch_description():
     ld = LaunchDescription()
@@ -25,7 +31,8 @@ def generate_launch_description():
     ]
 
     cam_to_world = Node(
-        package='sketch-terminator2', executable='camera_to_world.py', name='cam2world', output='screen'
+        package='sketch-terminator2', executable='camera_to_world.py', name='cam2world', output='screen',
+        parameters=[calib_config_path]
     )
 
     camera_group = GroupAction(camera_nodes)

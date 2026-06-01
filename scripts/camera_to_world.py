@@ -6,32 +6,43 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 
-checkerboard_dimensions = (9, 7)
+printed_params = False
 
-def generate_world_points(checkerboard_dim=checkerboard_dimensions, square_size=0.0186):
+def generate_world_points(checkerboard_dim, square_size):
     objp = np.zeros((checkerboard_dim[0]*checkerboard_dim[1],3), np.float32)
     objp[:,:2] = np.mgrid[0:checkerboard_dim[0],0:checkerboard_dim[1]].T.reshape(-1,2)
     objp *= square_size
     return objp
 
-def generate_world_points_R(checkerboard_dim=checkerboard_dimensions, square_size=0.0186):
+def generate_world_points_R(checkerboard_dim, square_size, x_offset, y_offset, rotation_diagonal):
     objp = np.zeros((checkerboard_dim[0]*checkerboard_dim[1],3), np.float32)
     objp[:,:2] = np.mgrid[0:checkerboard_dim[0],0:checkerboard_dim[1]].T.reshape(-1,2)
     objp *= square_size
 
     ## transform points to {R} frame
     T_R_checkerboard = np.eye(4)
-    T_R_checkerboard[0,0] = 1
-    T_R_checkerboard[1,1] = -1
-    T_R_checkerboard[2,2] = -1
-    T_R_checkerboard[0,3] = 0.0423
-    T_R_checkerboard[1,3] = 0.1016
+    T_R_checkerboard[0,0] = rotation_diagonal[0]
+    T_R_checkerboard[1,1] = rotation_diagonal[1]
+    T_R_checkerboard[2,2] = rotation_diagonal[2]
+    T_R_checkerboard[0,3] = x_offset + square_size * (checkerboard_dim[0] + 3)
+    T_R_checkerboard[1,3] = y_offset - square_size * (checkerboard_dim[1] + 1)
     T_R_checkerboard[2,3] = 0
+
+    global printed_params
+    if not printed_params:
+        print("\n=== LOADED PARAMETERS ===")
+        print(f"Board Dimensions (WxH): {checkerboard_dim}")
+        print(f"Square Size: {square_size} m")
+        print(f"X Offset: {x_offset} m, Y Offset: {y_offset} m")
+        print("T_R_checkerboard Transformation Matrix:")
+        print(np.array2string(T_R_checkerboard, precision=5, separator=', ', suppress_small=True))
+        print("=========================\n")
+        printed_params = True
 
     objp_h = np.hstack((objp, np.ones((objp.shape[0], 1))))
     objp_t = T_R_checkerboard.dot(objp_h.T)
     objp = objp_t[:3, :]
-    objp = objp.T
+    objp = objp.T.astype(np.float32)
 
     return objp
 
@@ -67,6 +78,15 @@ def draw(img, imgpts):
 class CamToWorld(Node):
     def __init__(self):
         super().__init__('cam_to_world')
+        
+        # Declare parameters for checkerboard
+        self.declare_parameter('checkerboard_width', 9)
+        self.declare_parameter('checkerboard_height', 7)
+        self.declare_parameter('square_size', 0.0186)
+        self.declare_parameter('x_offset', 0.0423)
+        self.declare_parameter('y_offset', 0.1016)
+        self.declare_parameter('rotation_diagonal', [-1.0, 1.0, -1.0])
+        
         self.image_sub = self.create_subscription(
             Image,
             '/image_raw',
@@ -97,19 +117,26 @@ class CamToWorld(Node):
         rgb_image = cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR) ## ROS is RGB, OpenCV is BGR
 
         ## detect checkerboard
+        cb_width = self.get_parameter('checkerboard_width').get_parameter_value().integer_value
+        cb_height = self.get_parameter('checkerboard_height').get_parameter_value().integer_value
+        square_size = self.get_parameter('square_size').get_parameter_value().double_value
+        x_offset = self.get_parameter('x_offset').get_parameter_value().double_value
+        y_offset = self.get_parameter('y_offset').get_parameter_value().double_value
+        rotation_diagonal = list(self.get_parameter('rotation_diagonal').get_parameter_value().double_array_value)
+        checkerboard_dims = (cb_width, cb_height)
 
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
         gray = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2GRAY)
 
-        ret, corners = cv2.findChessboardCorners(gray, checkerboard_dimensions, None)
+        ret, corners = cv2.findChessboardCorners(gray, checkerboard_dims, None)
         if ret:
             corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
-            cv2.drawChessboardCorners(rgb_image, checkerboard_dimensions, corners2, ret)
+            cv2.drawChessboardCorners(rgb_image, checkerboard_dims, corners2, ret)
 
             ## solve PnP
-            # world_points = generate_world_points_R()
-            world_points = generate_world_points()
+            world_points = generate_world_points_R(checkerboard_dims, square_size, x_offset, y_offset, rotation_diagonal)
+            #world_points = generate_world_points(checkerboard_dims, square_size)
             ret_pnp, rvecs, tvecs = cv2.solvePnP(world_points, corners2, self.k_matrix, self.distortion_params, flags=cv2.SOLVEPNP_ITERATIVE)
 
             if ret_pnp:

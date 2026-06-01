@@ -13,10 +13,12 @@ yolo_workspace_processing_node:
 
     # --- NOVI EKSTRINZIČNI PARAMETRI (Rotacija 3x3 u jednom redu) ---
     R_cam_to_robot: [
-       0.99900,  0.02203, -0.03903,
-       0.02640, -0.99298,  0.11528,
-      -0.03621, -0.11619, -0.99257
+       0.03047,-0.99869,-0.04116,
+       -0.99088,-0.03559, 0.12996,
+      -0.13126, 0.03682,-0.99066
     ]
 
     # Vektor translacije T (X, Y, Z) izražen direktno u milimetrima (m * 1000)
-    t_cam_to_robot: [-221.58, -38.74, 622.54]
+    t_cam_to_robot: [16.05, 177.88, 687.39]
+
+

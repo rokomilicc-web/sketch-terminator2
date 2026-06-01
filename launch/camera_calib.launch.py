@@ -1,4 +1,5 @@
 import os
+import yaml
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
@@ -22,17 +23,17 @@ camera_calib_path = os.path.join(
 def generate_launch_description():
     ld = LaunchDescription()
 
-    ## use use args if you want to
-    arg_size = DeclareLaunchArgument(
-            'size',
-            default_value='7x9',
-            description='Checkerboard size'
-        )
-    arg_square = DeclareLaunchArgument(
-            'square',
-            default_value='0.0175',
-            description='Square size'
-        )
+    calib_config_path = os.path.join(
+            get_package_share_directory('sketch-terminator2'),
+            'config',
+            'calib_config.yaml'
+            )
+
+    with open(calib_config_path, 'r') as f:
+        calib_params = yaml.safe_load(f)['cam2world']['ros__parameters']
+
+    size_arg = f"{calib_params['checkerboard_height']}x{calib_params['checkerboard_width']}"
+    square_arg = str(calib_params['square_size'])
 
     camera_nodes = [
         Node(
@@ -44,7 +45,7 @@ def generate_launch_description():
 
     calibration_node = Node(
         package='camera_calibration', executable='cameracalibrator', name='camera_calib', output='screen',
-        arguments = ['--size', '7x9', '--square', '0.0175'], ## make sure these are correct
+        arguments = ['--size', size_arg, '--square', square_arg],
         remappings=[('image','/image_raw')],
     )
 
